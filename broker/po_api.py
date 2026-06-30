@@ -168,6 +168,24 @@ class PocketOptionAPIClient:
             # Library version does not expose these methods — fall back to SSID parsing
             log.info("PocketOptionAPIClient connected (dry_run={})", self._dry_run)
 
+    async def close(self) -> None:
+        """Drain the underlying Rust client before Python finalization.
+
+        The SDK's tokio runtime keeps worker threads that call back into
+        Python via PyO3. If the process exits while they're alive, one of
+        them can hit PyGILState_Ensure during Py_Finalize and segfault
+        (see 2026-06-30 22:51 crash report). Calling shutdown() joins the
+        runtime first so the workers stop before the interpreter tears down.
+        """
+        client = self._client
+        if client is None:
+            return
+        self._client = None
+        try:
+            await client.shutdown()
+        except Exception as exc:
+            log.warning("PocketOption shutdown raised (ignored): {}", exc)
+
     # ── demo guard ───────────────────────────────────────────────────────────
 
     def _resolve_is_demo(self) -> Optional[bool]:
