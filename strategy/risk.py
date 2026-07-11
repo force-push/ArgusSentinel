@@ -2,7 +2,10 @@
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import json
+import sqlite3
+from pathlib import Path
 
 from utils.logger import log
 
@@ -40,8 +43,15 @@ class RiskManager:
 
     # ────────────────────────────────────────────────────────────────
 
-    def is_allowed(self, current_balance: float | None = None) -> bool:
-        """Check all constraints. Set self.block_reason if blocked."""
+    def is_allowed(
+        self, current_balance: float | None = None, *, now: datetime | None = None
+    ) -> bool:
+        """Check all constraints. Set self.block_reason if blocked.
+
+        ``now`` is injectable so the trades/hour and cooldown windows are
+        evaluated against the same reference time used to seed risk state
+        (see ``seed_from_db``); it defaults to the current UTC time.
+        """
         self.block_reason = ""
 
         # Balance check
@@ -52,7 +62,7 @@ class RiskManager:
                 return False
 
         # Trades per hour
-        now = datetime.now()
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         hour_ago = now - timedelta(hours=1)
         recent = [t for t in self.trade_history if t.timestamp > hour_ago]
         if len(recent) >= self.max_trades_per_hour:
@@ -76,7 +86,7 @@ class RiskManager:
 
     def record_trade(self, direction: str, amount: float, result: str) -> None:
         """Record a completed trade and update P&L."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.trade_history.append(TradeRecord(now, direction, amount, result))
 
         if result == "WIN":
@@ -93,3 +103,75 @@ class RiskManager:
         """Reset daily P&L (call at market open)."""
         self.daily_pnl = 0.0
         log.info("Daily P&L reset")
+
+    def seed_from_db(self, db_path: str | Path, *, now: datetime | None = None) -> int:
+        """Restore today's risk state from resolved real trades.
+
+        Risk limits must survive process restarts. The dashboard and analytics
+        read the SQLite store, so seed from the same source of truth at startup.
+        """
+        path = Path(db_path)
+        if not path.exists():
+            return 0
+
+        now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        # Match dashboard /api/state's 1D KPI window. This is stricter than
+        # midnight-UTC and avoids a restart resetting loss exposure mid-session.
+        day_start = now_utc - timedelta(days=1)
+        hour_ago = now_utc - timedelta(hours=1)
+
+        with sqlite3.connect(str(path), timeout=15.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT ts, outcome, pnl, data
+                FROM decisions
+                WHERE decision = 'TRADE'
+                  AND shadow = 0
+                  AND outcome IN ('win', 'loss', 'draw')
+                  AND ts >= ?
+                ORDER BY ts ASC
+                """,
+                (day_start.isoformat(),),
+            ).fetchall()
+
+        self.daily_pnl = 0.0
+        self.trade_history.clear()
+        self.last_loss_time = None
+
+        for row in rows:
+            trade_ts = self._parse_ts(row["ts"])
+            if trade_ts is None:
+                continue
+            pnl = float(row["pnl"] or 0.0)
+            self.daily_pnl += pnl
+
+            outcome = str(row["outcome"] or "").upper()
+            data = json.loads(row["data"] or "{}")
+            amount = float(data.get("stake") or abs(pnl) or self.trade_amount)
+            direction = str(data.get("bot_direction") or data.get("our_direction") or "")
+
+            if trade_ts >= hour_ago:
+                self.trade_history.append(TradeRecord(trade_ts, direction, amount, outcome))
+            if outcome == "LOSS":
+                self.last_loss_time = trade_ts
+
+        log.info(
+            "RiskManager seeded from DB: {} resolved trade(s), rolling 24h P&L {:+.2f}, {} trade(s) in last hour",
+            len(rows),
+            self.daily_pnl,
+            len(self.trade_history),
+        )
+        return len(rows)
+
+    @staticmethod
+    def _parse_ts(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)

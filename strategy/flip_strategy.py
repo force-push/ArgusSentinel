@@ -51,6 +51,10 @@ class FlipParams:
     adx_period: int = 14
     adx_flip_min: float = 22.0      # min ADX to confirm a fresh flip
     adx_trend_min: float = 25.0     # higher bar for trend continuation
+    call_adx_flip_min: float = 0.0  # direction-specific override; 0 = use adx_flip_min
+    put_adx_flip_min: float = 0.0
+    call_adx_trend_min: float = 0.0  # direction-specific override; 0 = use adx_trend_min
+    put_adx_trend_min: float = 0.0
     adx_max: float = 999.0          # skip entries above this ADX (over-extended/exhausted)
     require_adx_rising: bool = True  # continuation needs ADX rising
     atr_distance_min: float = 0.5   # continuation: price ≥ this×ATR from ST band
@@ -325,10 +329,15 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             if roc_dir != direction:
                 return FlipDecision(None, None,
                                     f"ROC({params.roc_period}) {roc_val:+.4f}% disagrees → {roc_dir} ({diag})", metrics)
-        if adx_now >= params.adx_flip_min:
+        flip_adx_min = (
+            params.call_adx_flip_min if direction == "CALL" and params.call_adx_flip_min > 0
+            else params.put_adx_flip_min if direction == "PUT" and params.put_adx_flip_min > 0
+            else params.adx_flip_min
+        )
+        if adx_now >= flip_adx_min:
             return FlipDecision(direction, "flip", f"FLIP {direction} confirmed ({diag})",
                                 {**metrics, "entry_kind": "flip"})
-        return FlipDecision(None, None, f"flip but ADX<{params.adx_flip_min} ({diag})", metrics)
+        return FlipDecision(None, None, f"flip but ADX<{flip_adx_min} ({diag})", metrics)
 
     # Established trend → continuation. Edge requires: ADX strength + rising, price
     # within the 1–2 ATR "confirmed but not over-extended" zone, MACD momentum
@@ -343,7 +352,12 @@ def evaluate_flip(df: pd.DataFrame, params: FlipParams = FlipParams()) -> FlipDe
             or (direction == "PUT"  and (ndi - pdi) > params.di_spread_override)
         )
     )
-    adx_ok = adx_now >= params.adx_trend_min or _di_spread_strong
+    trend_adx_min = (
+        params.call_adx_trend_min if direction == "CALL" and params.call_adx_trend_min > 0
+        else params.put_adx_trend_min if direction == "PUT" and params.put_adx_trend_min > 0
+        else params.adx_trend_min
+    )
+    adx_ok = adx_now >= trend_adx_min or _di_spread_strong
     rising_ok = adx_rising or not params.require_adx_rising or _di_spread_strong
     macd_strong = macd_gap_atr >= params.cont_macd_gap_min or _di_spread_strong
     dist_in_zone = params.atr_distance_min <= dist <= params.atr_distance_max

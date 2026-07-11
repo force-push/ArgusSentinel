@@ -62,3 +62,80 @@ def test_bad_regex_falls_through_to_allowlist(monkeypatch):
 
 def test_empty_symbol_rejected():
     assert not is_pair_allowed("", _cfg(regex="(USD)"))
+
+
+# ── Dynamic pair universe (data/pair_universe.json hot-reload) ──────────────
+
+def _dyn_cfg(tmp_path, pairs=None, enabled=True, max_age=24.0, static=None):
+    import json as _json
+    path = tmp_path / "pair_universe.json"
+    if pairs is not None:
+        path.write_text(_json.dumps({"pairs": pairs}))
+    cfg = SimpleNamespace(
+        allowed_pair_regex="",
+        allowed_pairs=static or ["STATIC_otc"],
+        blocked_pairs=[],
+        dynamic_pairs_enabled=enabled,
+        dynamic_pairs_max_age_hours=max_age,
+    )
+    return cfg, path
+
+
+def _reset_universe_cache():
+    pair_filter._universe_cache.update(mtime=None, pairs=None)
+
+
+def test_dynamic_universe_overrides_static_allowlist(tmp_path, monkeypatch):
+    _reset_universe_cache()
+    cfg, path = _dyn_cfg(tmp_path, pairs=["MATIC_otc", "USDRUB_otc"])
+    monkeypatch.setattr(pair_filter, "UNIVERSE_PATH", path)
+    assert is_pair_allowed("MATIC_otc", cfg)
+    assert not is_pair_allowed("STATIC_otc", cfg)   # dynamic replaces static
+
+
+def test_dynamic_disabled_uses_static_allowlist(tmp_path, monkeypatch):
+    _reset_universe_cache()
+    cfg, path = _dyn_cfg(tmp_path, pairs=["MATIC_otc"], enabled=False)
+    monkeypatch.setattr(pair_filter, "UNIVERSE_PATH", path)
+    assert is_pair_allowed("STATIC_otc", cfg)
+    assert not is_pair_allowed("MATIC_otc", cfg)
+
+
+def test_missing_universe_file_falls_back_to_static(tmp_path, monkeypatch):
+    _reset_universe_cache()
+    cfg, path = _dyn_cfg(tmp_path, pairs=None)      # file never written
+    monkeypatch.setattr(pair_filter, "UNIVERSE_PATH", path)
+    assert is_pair_allowed("STATIC_otc", cfg)
+
+
+def test_stale_universe_file_falls_back_to_static(tmp_path, monkeypatch):
+    import os
+    _reset_universe_cache()
+    cfg, path = _dyn_cfg(tmp_path, pairs=["MATIC_otc"], max_age=1.0)
+    old = 7200  # 2h ago > 1h max age
+    stamp = __import__("time").time() - old
+    os.utime(path, (stamp, stamp))
+    monkeypatch.setattr(pair_filter, "UNIVERSE_PATH", path)
+    assert is_pair_allowed("STATIC_otc", cfg)
+    assert not is_pair_allowed("MATIC_otc", cfg)
+
+
+def test_corrupt_universe_file_falls_back_to_static(tmp_path, monkeypatch):
+    _reset_universe_cache()
+    cfg, path = _dyn_cfg(tmp_path, pairs=None)
+    path.write_text("{not json")
+    monkeypatch.setattr(pair_filter, "UNIVERSE_PATH", path)
+    assert is_pair_allowed("STATIC_otc", cfg)
+
+
+def test_dynamic_universe_hot_reloads_on_mtime_change(tmp_path, monkeypatch):
+    import json as _json, os
+    _reset_universe_cache()
+    cfg, path = _dyn_cfg(tmp_path, pairs=["MATIC_otc"])
+    monkeypatch.setattr(pair_filter, "UNIVERSE_PATH", path)
+    assert is_pair_allowed("MATIC_otc", cfg)
+    path.write_text(_json.dumps({"pairs": ["DOGE_otc"]}))
+    stamp = __import__("time").time() + 1           # force a distinct mtime
+    os.utime(path, (stamp, stamp))
+    assert is_pair_allowed("DOGE_otc", cfg)
+    assert not is_pair_allowed("MATIC_otc", cfg)

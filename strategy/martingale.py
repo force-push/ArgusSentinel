@@ -128,8 +128,9 @@ class MartingaleTracker:
         db_path: str,
         *,
         max_level: int = 2,
-        lookback_hours: float = 6.0,
+        lookback_hours: float = 24.0,
         scope: str = "pair",
+        min_session_trades: int = 3,
     ) -> None:
         """Reconstruct loss streaks and session counts from the decisions DB.
 
@@ -166,7 +167,11 @@ class MartingaleTracker:
                 )
                 return
 
-            tails = tail_outcomes_by_pair(db_path, since_iso=since, max_per_pair=max_level + 2)
+            tails = tail_outcomes_by_pair(
+                db_path,
+                since_iso=since,
+                max_per_pair=max(max_level + 2, min_session_trades + 1),
+            )
         except Exception as exc:
             log.warning("MartingaleTracker.seed_from_db failed — starting fresh: {}", exc)
             return

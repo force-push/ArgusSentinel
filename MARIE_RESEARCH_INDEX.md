@@ -30,14 +30,20 @@
    - Timeline and milestones
    - Expected impact per signal
 
+5. **docs/tradingagents-argus-integration.md** — TradingAgents architecture import plan
+   - What to borrow from Kym's TradingAgents fork
+   - Argus Research Council design
+   - Shadow-only storage, review, and promotion gates
+   - Explicit rule: LLM research cannot affect live execution until measured
+
 ### Implementation Ready (Copy & Paste)
-5. **docs/tier3-signal-candidates.md** — Production-grade code
+6. **docs/tier3-signal-candidates.md** — Production-grade code
    - Complete Python implementations
    - Unit tests for each signal
    - Parameter tuning guidance
    - Gotchas and troubleshooting
 
-6. **RESEARCH_ACTIONS_CHECKLIST.md** — Day-by-day action plan
+7. **RESEARCH_ACTIONS_CHECKLIST.md** — Day-by-day action plan
    - Phase 0–5 (Jun 19–27)
    - Specific code changes and file locations
    - Testing procedures with SQL queries

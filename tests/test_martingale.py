@@ -1,7 +1,9 @@
 """Tests for strategy.martingale.MartingaleTracker."""
 
 import pytest
+from datetime import datetime, timedelta, timezone
 from strategy.martingale import MartingaleTracker
+from data.decisions_store import init_db, insert_decision
 
 # Default call-time params matching .env defaults; min_session_trades=0 disables
 # the session gate so pre-existing tests remain unaffected by the new gate.
@@ -237,3 +239,35 @@ def test_session_gate_independent_per_pair(tracker):
     tracker.record_outcome("B", False, **_RO)  # only 1 session trade
     assert _stake_sess(tracker, "A", min_pair_wr=0.0) == 2.0
     assert _stake_sess(tracker, "B", min_pair_wr=0.0) == 1.0
+
+
+# ── seed_from_db ──────────────────────────────────────────────────────────────
+
+def _db_trade(ts: datetime, pair: str, outcome: str) -> dict:
+    return {
+        "ts": ts.isoformat(),
+        "cycle_id": "seed",
+        "trade_id": f"{pair}-{outcome}-{ts.timestamp()}",
+        "pair_api": pair,
+        "decision": "TRADE",
+        "shadow": False,
+        "our_direction": "CALL",
+        "expiry_seconds": 5,
+        "outcome": outcome,
+        "pnl": 1.38 if outcome == "win" else -1.5,
+        "stake": 1.5,
+    }
+
+
+def test_seed_from_db_uses_session_gate_window(tmp_path):
+    db = tmp_path / "decisions.db"
+    init_db(db)
+    ts = datetime.now(timezone.utc)
+    insert_decision(db, _db_trade(ts, "PAIR", "win"))
+    insert_decision(db, _db_trade(ts + timedelta(seconds=1), "PAIR", "loss"))
+
+    tracker = MartingaleTracker()
+    tracker.seed_from_db(db, max_level=2, min_session_trades=3)
+
+    assert tracker.current_level("PAIR", max_level=2) == 1
+    assert _stake_sess(tracker, "PAIR", min_pair_wr=0.0) == 1.0

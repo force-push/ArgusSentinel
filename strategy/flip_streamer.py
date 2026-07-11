@@ -125,6 +125,10 @@ class FlipStreamer:
                 async for df in stream:
                     if not self._running or self._halted:
                         break
+                    from strategy.pair_filter import is_pair_allowed
+                    if not is_pair_allowed(pair):
+                        log.info("FlipStreamer {}: pair no longer allowed — stopping stream", pair)
+                        return
                     if df.empty or len(df) < _MIN_BARS:
                         continue
                     levers = load_levers()

@@ -143,8 +143,9 @@ def test_rolling_pair_rate_filters_pair_window_and_shadow(db):
         before_iso="2026-06-13T11:00:00+00:00",
     )
 
-    assert n == 3
-    assert wr == pytest.approx(2 / 3)
+    # draws are excluded from both numerator and denominator — only win + loss count
+    assert n == 2
+    assert wr == pytest.approx(1 / 2)
 
 
 def test_incremental_cache_picks_up_inserts(db):

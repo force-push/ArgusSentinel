@@ -366,10 +366,14 @@ class FocusSessionManager:
                     )
                     return
 
-                # ── mid-session payout monitoring ─────────────────────────────
+                # ── mid-session payout + blocklist monitoring ─────────────────
                 bars_since_payout_check += 1
                 if bars_since_payout_check >= _PAYOUT_CHECK_BARS:
                     bars_since_payout_check = 0
+                    from strategy.pair_filter import is_pair_allowed
+                    if not is_pair_allowed(pair):
+                        log.info("FocusSession: {} no longer allowed — rotating", pair)
+                        return
                     live_payout = await self._api.get_payout(pair)
                     if live_payout is None or live_payout < settings.focus_payout_floor:
                         log.info(

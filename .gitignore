@@ -38,3 +38,8 @@ build/
 
 # Claude Code local worktrees / settings
 .claude/
+
+# Runtime artifacts (2026-07-11)
+trades.db
+data/decisions.db.bak*
+data/.live_state.*.tmp

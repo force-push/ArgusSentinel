@@ -294,7 +294,8 @@ def rolling_pair_rate(
 ) -> tuple[float, int]:
     """Return recent non-shadow pair WR over ``[since_iso, before_iso)``.
 
-    Draws count as non-losses, matching WinRateTracker.rate/pair_rate semantics.
+    Draws are excluded from both numerator and denominator — they return stake
+    with zero PnL and should not dilute or inflate WR. Only wins and losses count.
     Pending trades, skips, and shadow rows are excluded.
     """
     if not pair or not Path(path).exists():
@@ -304,11 +305,11 @@ def rolling_pair_rate(
             """
             SELECT
               COUNT(*) AS n,
-              SUM(CASE WHEN outcome IN ('win', 'draw') THEN 1 ELSE 0 END) AS non_losses
+              SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS wins
             FROM decisions
             WHERE pair_api = ?
               AND shadow = 0
-              AND outcome IN ('win', 'loss', 'draw')
+              AND outcome IN ('win', 'loss')
               AND ts >= ?
               AND ts < ?
             """,
@@ -317,7 +318,7 @@ def rolling_pair_rate(
     n = int(row["n"] or 0) if row else 0
     if n == 0:
         return 0.0, 0
-    return float(row["non_losses"] or 0) / n, n
+    return float(row["wins"] or 0) / n, n
 
 
 def tail_outcomes_by_pair(
@@ -468,7 +469,7 @@ def pair_ev_aggregates(path: str | Path) -> list[dict]:
         rows = conn.execute(
             """
             SELECT pair_api AS pair,
-                   SUM(CASE WHEN outcome IN ('win','draw') THEN 1 ELSE 0 END) AS w,
+                   SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS w,
                    SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS l,
                    AVG(json_extract(data, '$.bot_win_rate')) AS bot_wr,
                    AVG(COALESCE(

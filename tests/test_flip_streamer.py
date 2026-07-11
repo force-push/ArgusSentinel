@@ -70,6 +70,7 @@ _PERMISSIVE_LEVERS = {
 @pytest.mark.asyncio
 async def test_streamer_places_on_fresh_flip(monkeypatch):
     monkeypatch.setattr(flip_streamer, "load_levers", lambda: dict(_PERMISSIVE_LEVERS))
+    monkeypatch.setattr("strategy.pair_filter.is_pair_allowed", lambda pair: True)
 
     # Downtrend seed then sharp reversal — should trigger a CALL flip
     down = list(np.linspace(110, 95, 150))

@@ -23,6 +23,7 @@ from signals.confluence import ConfluenceResult
 from strategy.expiry import select_expiry
 from strategy.market_filters import TimeOfDayFilter, PairHourBlocklist
 from strategy.martingale import MartingaleTracker
+from strategy.run_streak import RunStreakTracker
 from strategy.probability_calibrator import ProbabilityCalibrator
 from strategy.trade_logger import DecisionRow, write_decision, backfill_outcome
 from utils.logger import log
@@ -67,6 +68,9 @@ class StrategyManagerV2:
         # resets on win. Off by default (MARTINGALE_ENABLED=false).
         # Params are read from settings at call-time so dashboard edits hot-reload.
         self._martingale = MartingaleTracker()
+        # Run-streak stake upscaler — adds a flat increment per consecutive win
+        # on a pair, resets on loss. Off by default (RUN_UPSCALE_ENABLED=false).
+        self._run_streak = RunStreakTracker()
         # Sentiment collector — live crowd-positioning (0-100) per pair.
         # Attached to the WS connection after connect(); stamps every DecisionRow.
         self._sentiment = SentimentCollector()
@@ -161,11 +165,9 @@ class StrategyManagerV2:
                 f"insufficient_samples:{n_tracked}/{settings.variable_stake_min_samples}",
                 break_even, required, tracked_rate, n_tracked,
             )
-        min_multiplier = float(settings.variable_stake_min_multiplier)
         if tracked_rate < required:
-            stake = round(base * min_multiplier, 2)
             return self.VariableStake(
-                stake, stake != base, round(stake / base, 4) if base else 1.0,
+                base, False, 1.0,
                 f"below_required_wr:{tracked_rate:.1%}<{required:.1%}",
                 break_even, required, tracked_rate, n_tracked,
             )
@@ -191,6 +193,26 @@ class StrategyManagerV2:
             f"edge_scaled:wr={tracked_rate:.1%}/n={n_tracked}",
             break_even, required, tracked_rate, n_tracked,
         )
+
+    def _run_streak_stake(self, pair: str, base_stake: float) -> tuple[float, int]:
+        """Return (stake, level) after applying run-streak upscaling.
+
+        Adds RUN_UPSCALE_INCREMENT per consecutive win up to RUN_UPSCALE_MAX_LEVEL.
+        Returns (base_stake, 0) when disabled or no active streak.
+        """
+        if not settings.run_upscale_enabled:
+            return base_stake, 0
+        stake, level = self._run_streak.get_stake(
+            pair, base_stake,
+            increment=float(settings.run_upscale_increment),
+            max_level=int(settings.run_upscale_max_level),
+        )
+        if level > 0:
+            log.debug(
+                "RunStreak {}: level={} → stake ${:.2f} (base ${:.2f} +{}×${:.2f})",
+                pair, level, stake, base_stake, level, settings.run_upscale_increment,
+            )
+        return stake, level
 
     def _martingale_stake_info(self, pair: str, balance: float, *, base_stake: float | None = None) -> MartingaleStake:
         """Return Martingale-adjusted stake plus the exact settings snapshot used.
@@ -307,8 +329,11 @@ class StrategyManagerV2:
                 ", ".join(f"{hours:g}h=n/a" for _, _, hours in rates),
             )
             return self._tracker.pair_rate(pair)
-        pair_wr = min(wr for wr, _, _ in rates_with_data)
-        n_wr = min(n for _, n, _ in rates_with_data)
+        # Use the window with the worst WR; take n from that same window
+        # (not independent mins — they can come from different windows and
+        # incorrectly fail the sample-count gate with a valid WR).
+        worst = min(rates_with_data, key=lambda x: x[0])
+        pair_wr, n_wr = worst[0], worst[1]
         log.debug(
             "Martingale {} rolling WR gate: {} (skipped {} empty windows)",
             pair,
@@ -405,6 +430,12 @@ class StrategyManagerV2:
         except Exception:
             pair_wr, pair_n = 0.0, 0
         rsi = (flip_metrics or {}).get("rsi")
+        entry_kind = (flip_metrics or {}).get("entry_kind")
+        bars_in_trend = (flip_metrics or {}).get("bars_in_trend")
+        gap_expansion = (flip_metrics or {}).get("gap_expansion")
+        dist_atr = (flip_metrics or {}).get("dist_atr")
+        macd_gap_atr = (flip_metrics or {}).get("macd_gap_atr")
+        adx = (flip_metrics or {}).get("adx")
         reversal = self._last_candle_reversed(df, direction)
         stake_ratio = (
             prospective_stake / settings.stake_amount
@@ -437,6 +468,24 @@ class StrategyManagerV2:
         elif n_tracked >= 25 and tracked_rate >= 0.60:
             strength += 0.02
             positives.append(f"strong_direction_wr={tracked_rate:.1%}/n={n_tracked}")
+
+        if entry_kind == "flip":
+            if isinstance(bars_in_trend, (int, float)) and bars_in_trend > 8:
+                strength -= 0.04
+                penalties.append(f"stale_flip={int(bars_in_trend)}bars")
+            if isinstance(gap_expansion, (int, float)) and 0 <= gap_expansion < 0.15:
+                strength -= 0.03
+                penalties.append(f"weak_flip_gap_expansion={gap_expansion:.3f}")
+            if isinstance(adx, (int, float)) and adx > 55.0:
+                strength -= 0.03
+                penalties.append(f"flip_adx_exhausted={adx:.1f}")
+        elif entry_kind == "trend":
+            if isinstance(dist_atr, (int, float)) and dist_atr > 2.2:
+                strength -= 0.04
+                penalties.append(f"trend_overextended={dist_atr:.2f}ATR")
+            if isinstance(macd_gap_atr, (int, float)) and macd_gap_atr < 0.35:
+                strength -= 0.03
+                penalties.append(f"weak_trend_macd_gap={macd_gap_atr:.3f}")
 
         rsi_extreme = False
         if isinstance(rsi, (int, float)):
@@ -471,6 +520,12 @@ class StrategyManagerV2:
             "reversal_against_entry": reversal,
             "stake_ratio": stake_ratio,
             "martingale_escalated": martingale_escalated,
+            "entry_kind": entry_kind,
+            "bars_in_trend": bars_in_trend if isinstance(bars_in_trend, (int, float)) else None,
+            "gap_expansion": gap_expansion if isinstance(gap_expansion, (int, float)) else None,
+            "dist_atr": dist_atr if isinstance(dist_atr, (int, float)) else None,
+            "macd_gap_atr": macd_gap_atr if isinstance(macd_gap_atr, (int, float)) else None,
+            "adx": adx if isinstance(adx, (int, float)) else None,
         }
         calibrator = getattr(self, "_calibrator", None)
         learned_probability = None
@@ -716,6 +771,17 @@ class StrategyManagerV2:
                 active=[], last_cycle={"cycle_id": cid, "status": "scanning", "skip_reason": None},
                 risk_block_reason=None,
             )
+
+        if not self._risk.is_allowed(balance_before):
+            log.warning("[{}] risk blocked before candle prefetch: {}", cid, getattr(self._risk, "block_reason", ""))
+            if self._bridge:
+                self._bridge.heartbeat(
+                    mode=settings.trade_mode.value, dry_run=settings.dry_run,
+                    connected=True, balance=balance_before, currency="USD",
+                    active=[], last_cycle={"cycle_id": cid, "status": "risk_blocked", "skip_reason": None},
+                    risk_block_reason=getattr(self._risk, "block_reason", ""),
+                )
+            return
 
         expiry = select_expiry(settings.default_expiry_seconds, settings.allowed_expiries)
         candle_period = settings.candle_interval_seconds
@@ -994,8 +1060,9 @@ class StrategyManagerV2:
                 n_tracked=n_tracked,
                 balance=balance_before or 0,
             )
+            prospective_run_stake, _ = self._run_streak_stake(pair_api, prospective_var.stake)
             prospective_mg = self._martingale_stake_info(
-                pair_api, balance_before or 0, base_stake=prospective_var.stake
+                pair_api, balance_before or 0, base_stake=prospective_run_stake
             )
             prospective_stake = prospective_mg.stake
             assessment = self._assess_trade_signal(
@@ -1131,8 +1198,9 @@ class StrategyManagerV2:
                 n_tracked=n_tracked,
                 balance=balance_at_placement or 0,
             )
+            actual_run_stake, actual_run_level = self._run_streak_stake(pair_api, actual_var.stake)
             actual_mg = self._martingale_stake_info(
-                pair_api, balance_at_placement or 0, base_stake=actual_var.stake
+                pair_api, balance_at_placement or 0, base_stake=actual_run_stake
             )
             actual_stake = actual_mg.stake
             self._stamp_martingale(row, actual_mg)
@@ -1376,8 +1444,9 @@ class StrategyManagerV2:
                 n_tracked=n_tracked,
                 balance=balance or 0,
             )
+            actual_run_stake, _ = self._run_streak_stake(pair_api, actual_var.stake)
             actual_mg = self._martingale_stake_info(
-                pair_api, balance or 0, base_stake=actual_var.stake
+                pair_api, balance or 0, base_stake=actual_run_stake
             )
             actual_stake = actual_mg.stake
             assessment = self._assess_trade_signal(
@@ -1589,7 +1658,8 @@ class StrategyManagerV2:
             if not getattr(row, "shadow", False):
                 self._tracker.record(row.pair_api, row.bot_direction, row.expiry_seconds, outcome)
                 risk_result = {"win": "WIN", "loss": "LOSS", "draw": "DRAW"}.get(outcome.lower(), "PENDING")
-                self._risk.record_trade(row.bot_direction, row.stake, risk_result)
+                risk_amount = abs(pnl) if pnl is not None else row.stake
+                self._risk.record_trade(row.bot_direction, risk_amount, risk_result)
                 # Short post-loss cooldown (only on actual loss — draws don't trigger).
                 if outcome.lower() == "loss":
                     self._pair_cooldown.record_loss(row.pair_api)
@@ -1615,6 +1685,9 @@ class StrategyManagerV2:
                             max_level=settings.martingale_max_level,
                             multiplier=mg_multiplier,
                         )
+                    # Run-streak upscaler: update per-pair win streak
+                    if settings.run_upscale_enabled:
+                        self._run_streak.record_outcome(row.pair_api, outcome.lower())
 
             # Notify dashboard with complete resolved data
             if self._bridge:
@@ -1636,8 +1709,11 @@ class StrategyManagerV2:
         except Exception as e:
             log.error(f"Background resolution failed for {trade_id}: {e}")
         finally:
-            self._open_trades.pop(trade_id, None)
-            self._open_trade_count = max(0, self._open_trade_count - 1)
+            trade_info = self._open_trades.pop(trade_id, None)
+            resolved_row = trade_info["row"] if isinstance(trade_info, dict) else getattr(trade_info, "row", trade_info)
+            is_shadow = getattr(resolved_row, "shadow", False) if resolved_row is not None else False
+            if not is_shadow:
+                self._open_trade_count = max(0, self._open_trade_count - 1)
 
     def _log_ev_summary(self) -> None:
         """Log a compact broker-calibration + EV table from the decision store.

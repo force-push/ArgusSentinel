@@ -29,6 +29,8 @@ LEVERS_5S_PATH = "data/flip_levers_5s.json"
 _LEVER_KEYS = (
     "st_period", "st_multiplier", "flip_window_bars",
     "adx_flip_min", "adx_trend_min", "adx_max",
+    "call_adx_flip_min", "put_adx_flip_min",
+    "call_adx_trend_min", "put_adx_trend_min",
     "require_adx_rising", "atr_distance_min", "atr_distance_max",
     # flip-specific distance bounds (separate from continuation — opposite optimal zones:
     # trend best=dist1-2ATR, flip best=dist3+ATR exhaustion reversals; 0/999=off)
@@ -67,6 +69,10 @@ def _defaults() -> dict:
         "flip_window_bars": settings.flip_window_bars,
         "adx_flip_min": settings.flip_adx_min,
         "adx_trend_min": settings.trend_adx_min,
+        "call_adx_flip_min": 0.0,
+        "put_adx_flip_min": 0.0,
+        "call_adx_trend_min": 0.0,
+        "put_adx_trend_min": 0.0,
         "adx_max": settings.flip_adx_max,
         "require_adx_rising": settings.trend_require_adx_rising,
         "atr_distance_min": settings.trend_atr_distance_min,

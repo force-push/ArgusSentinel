@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import resource
+import signal
 import sys
 import time
 from pathlib import Path
@@ -238,90 +239,131 @@ async def main(cycles: int = 0) -> None:
 
     api_client, manager = _build_components()
 
-    if settings.po_ssid:
-        log.info("Connecting PocketOption API…")
-        await api_client.connect()
+    # Signal handlers — translate SIGTERM (supervisor preventive restart) and
+    # SIGINT (Ctrl-C) into a graceful shutdown. Without this, default Python
+    # signal handling can interrupt mid-await and skip the close() drain in
+    # the finally block below, re-introducing the segfault on shutdown.
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
 
-        # Log top active pairs by payout (informational)
-        active = await api_client.get_active_pairs()
-        if active:
-            top = active[:8]
-            log.info("Top pairs by payout: {}",
-                     "  ".join(f"{a['symbol']}={a['payout']}%" for a in top))
+    def _request_shutdown(signame: str) -> None:
+        if shutdown_event.is_set():
+            return
+        log.warning("Received {} — draining and exiting", signame)
+        shutdown_event.set()
 
-        # Seed WinRateTracker from PO closed-deals history (background, non-blocking).
-        # Skip the API fetch entirely when the tracker already has data from its JSON
-        # save file — 500 serial closed_deal() calls for a seed we don't need is wasteful.
-        async def _seed_win_rates():
-            if manager.tracker.has_data:
-                log.info("WinRateTracker already loaded ({} keys) — skipping PO history seed",
-                         len(manager.tracker._data))
-                return
-            deals = await api_client.get_po_trade_history(max_deals=100)
-            n = manager.tracker.seed_from_po_history(
-                deals, default_expiry_seconds=settings.default_expiry_seconds)
-            if n:
-                log.info("WinRateTracker seeded {} records from PO history", n)
-
-        asyncio.ensure_future(_seed_win_rates())
-
-        # Restore martingale streaks from recent DB history so a restart after a
-        # crash/reconnect doesn't silently reset all loss streaks to zero.
-        db_path = str(settings.decisions_db_path)
-        manager._martingale.seed_from_db(
-            db_path,
-            max_level=settings.martingale_max_level,
-            lookback_hours=6.0,
-            scope=settings.martingale_scope,
-        )
-    else:
-        log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
-
-    # Settings hot-reload: watch .env for changes (dashboard edits) every 10s
-    asyncio.ensure_future(_watch_env())
-
-    count = 0
-    consecutive_timeouts = 0
-    while True:
+    for _sig, _name in [(signal.SIGTERM, "SIGTERM"), (signal.SIGINT, "SIGINT")]:
         try:
-            # Hard cycle timeout: the WS layer can hang an await forever on a
-            # dropped connection (hangs observed 2026-06-11 at 09:15 + 15:45
-            # UTC+9:30 with the process alive but the loop dead). A scan of
-            # ~30 pairs takes 60-90s; 300s means genuinely stuck.
-            await asyncio.wait_for(manager.run_once(), timeout=300.0)
-            consecutive_timeouts = 0
+            loop.add_signal_handler(_sig, _request_shutdown, _name)
+        except (NotImplementedError, RuntimeError):
+            # add_signal_handler is unavailable in some environments (e.g. Windows).
+            pass
+
+    try:
+        if settings.po_ssid:
+            log.info("Connecting PocketOption API…")
+            await api_client.connect()
+
+            # Log top active pairs by payout (informational)
+            active = await api_client.get_active_pairs()
+            if active:
+                top = active[:8]
+                log.info("Top pairs by payout: {}",
+                         "  ".join(f"{a['symbol']}={a['payout']}%" for a in top))
+
+            # Seed WinRateTracker from PO closed-deals history (background, non-blocking).
+            # Skip the API fetch entirely when the tracker already has data from its JSON
+            # save file — 500 serial closed_deal() calls for a seed we don't need is wasteful.
+            async def _seed_win_rates():
+                if manager.tracker.has_data:
+                    log.info("WinRateTracker already loaded ({} keys) — skipping PO history seed",
+                             len(manager.tracker._data))
+                    return
+                deals = await api_client.get_po_trade_history(max_deals=100)
+                n = manager.tracker.seed_from_po_history(
+                    deals, default_expiry_seconds=settings.default_expiry_seconds)
+                if n:
+                    log.info("WinRateTracker seeded {} records from PO history", n)
+
+            asyncio.ensure_future(_seed_win_rates())
+
+            # Restore martingale streaks from recent DB history so a restart after a
+            # crash/reconnect doesn't silently reset all loss streaks to zero.
+            db_path = str(settings.decisions_db_path)
+            manager._risk.seed_from_db(db_path)
+            manager._martingale.seed_from_db(
+                db_path,
+                max_level=settings.martingale_max_level,
+                scope=settings.martingale_scope,
+                min_session_trades=settings.martingale_min_session_trades,
+            )
+            manager._run_streak.seed_from_db(
+                db_path,
+                max_level=settings.run_upscale_max_level,
+            )
+        else:
+            log.warning("No PO_SSID — candle fetching will fail; set PO_SSID in .env")
+
+        # Settings hot-reload: watch .env for changes (dashboard edits) every 10s
+        asyncio.ensure_future(_watch_env())
+
+        count = 0
+        consecutive_timeouts = 0
+        while True:
+            try:
+                # Hard cycle timeout: the WS layer can hang an await forever on a
+                # dropped connection (hangs observed 2026-06-11 at 09:15 + 15:45
+                # UTC+9:30 with the process alive but the loop dead). A scan of
+                # ~30 pairs takes 60-90s; 300s means genuinely stuck.
+                await asyncio.wait_for(manager.run_once(), timeout=300.0)
+                consecutive_timeouts = 0
+            except asyncio.TimeoutError:
+                consecutive_timeouts += 1
+                log.error("run_once exceeded 300s — cycle aborted (WS hang?) [{}/2]",
+                          consecutive_timeouts)
+                if consecutive_timeouts >= 2:
+                    # WS is persistently dead — exit so the supervisor restarts us
+                    # with a fresh connection. In-process reconnect is not reliable
+                    # with the Rust client's lazy internals.
+                    log.critical("2 consecutive cycle timeouts — exiting for supervisor restart")
+                    sys.exit(1)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                log.opt(exception=True).error("run_once error (will retry): {}", exc)
+
+            # FlipStreamer signals a clean exit when the broker connection is dead.
+            if manager._restart_requested:
+                log.critical("Exiting for supervisor restart — {}", manager._restart_requested)
+                break
+
+            # Signal-driven shutdown (SIGTERM from supervisor, SIGINT from user).
+            if shutdown_event.is_set():
+                log.info("Shutdown event set — exiting main loop cleanly")
+                break
+
+            # Heartbeat: mark the main loop alive at the end of every cycle so the
+            # supervisor's hang watchdog measures real cycle progress, not log churn.
+            _touch_heartbeat()
+
+            count += 1
+            _log_rss(count)
+            if cycles and count >= cycles:
+                log.info("Completed {} cycle(s) — exiting.", count)
+                break
+
+            # Brief pause between cycles to avoid hammering the bot
+            await asyncio.sleep(2)
+    finally:
+        # Drain the Rust SDK before Python finalization. Without this, tokio
+        # workers inside BinaryOptionsToolsV2 can call PyGILState_Ensure after
+        # Py_Finalize has started → SIGSEGV (see crash 2026-06-30 22:51:36).
+        try:
+            await asyncio.wait_for(api_client.close(), timeout=10.0)
         except asyncio.TimeoutError:
-            consecutive_timeouts += 1
-            log.error("run_once exceeded 300s — cycle aborted (WS hang?) [{}/2]",
-                      consecutive_timeouts)
-            if consecutive_timeouts >= 2:
-                # WS is persistently dead — exit so the supervisor restarts us
-                # with a fresh connection. In-process reconnect is not reliable
-                # with the Rust client's lazy internals.
-                log.critical("2 consecutive cycle timeouts — exiting for supervisor restart")
-                sys.exit(1)
-        except KeyboardInterrupt:
-            raise
+            log.warning("PocketOption shutdown timed out after 10s — proceeding with exit")
         except Exception as exc:
-            log.opt(exception=True).error("run_once error (will retry): {}", exc)
-
-        # FlipStreamer signals a clean exit when the broker connection is dead.
-        if manager._restart_requested:
-            log.critical("Exiting for supervisor restart — {}", manager._restart_requested)
-            sys.exit(1)
-
-        # Heartbeat: mark the main loop alive at the end of every cycle so the
-        # supervisor's hang watchdog measures real cycle progress, not log churn.
-        _touch_heartbeat()
-
-        count += 1
-        _log_rss(count)
-        if cycles and count >= cycles:
-            log.info("Completed {} cycle(s) — exiting.", count)
-            break
-
-        # Brief pause between cycles to avoid hammering the bot
-        await asyncio.sleep(2)
+            log.warning("PocketOption shutdown error (ignored): {}", exc)
 
 
 if __name__ == "__main__":

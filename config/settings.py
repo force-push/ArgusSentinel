@@ -117,6 +117,12 @@ class BotSettings(BaseSettings):
     # gates; pair mode can still use them.
     # All params are hot-reloadable — dashboard edits take effect immediately.
     # Default off — enable only after validating base strategy in demo.
+    # Run-streak upscaling: add a flat increment per consecutive win on a pair.
+    # Stake = base + (increment × min(streak, max_level)). Resets on loss.
+    run_upscale_enabled: bool = Field(default=False, alias="RUN_UPSCALE_ENABLED")
+    run_upscale_increment: float = Field(default=0.75, alias="RUN_UPSCALE_INCREMENT", ge=0.0, le=100.0)
+    run_upscale_max_level: int = Field(default=3, alias="RUN_UPSCALE_MAX_LEVEL", ge=1, le=10)
+
     martingale_enabled: bool = Field(default=False, alias="MARTINGALE_ENABLED")
     martingale_scope: str = Field(default="global", alias="MARTINGALE_SCOPE")
     martingale_multiplier: float = Field(default=2.0, alias="MARTINGALE_MULTIPLIER", ge=1.1, le=4.0)
@@ -163,6 +169,17 @@ class BotSettings(BaseSettings):
     # blocklist still applies). Looser than the exact allowed_pairs list: e.g.
     # "(USD|CNY|CNH)" trades any USD/CNY/CNH cross. Empty = off.
     allowed_pair_regex: str = Field(default="", alias="ALLOWED_PAIR_REGEX")
+    # Dynamic pair universe (2026-07-11): when True, the allowlist is read from
+    # data/pair_universe.json — written hourly by tools/pair_universe_update.py
+    # from rolling Wilson-lower-bound stats — and hot-reloaded mid-flight
+    # (mtime-cached, like flip_levers). Falls back to the static allowed_pairs
+    # list whenever the file is missing, invalid, empty, or older than
+    # dynamic_pairs_max_age_hours (a dead updater must not freeze the universe
+    # silently). Blocklist/regex precedence is unchanged.
+    dynamic_pairs_enabled: bool = Field(default=False, alias="DYNAMIC_PAIRS_ENABLED")
+    dynamic_pairs_max_age_hours: float = Field(
+        default=24.0, alias="DYNAMIC_PAIRS_MAX_AGE_HOURS", gt=0
+    )
     # One open trade per pair: don't re-enter a pair until its trade resolves
     # (~5s). Paces trend-continuation entries instead of firing every cycle.
     one_open_trade_per_pair: bool = Field(default=True, alias="ONE_OPEN_TRADE_PER_PAIR")
