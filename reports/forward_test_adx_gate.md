@@ -44,7 +44,12 @@ cut looks better mid-run, that is a NEW test, not an edit to this one.
 - The `flip_adx_exhausted` penalty (ADX > 55) still applies and contradicts the
   dose-response data (ADX>50 ran 58.9%); left unchanged for comparability. Revisit
   after this test reads out.
-- `data/flip_levers.json` (uncommitted 2026-07-09 state) independently requires
+- 2026-07-11T14:16Z: dynamic pair universe activated (DYNAMIC_PAIRS_ENABLED=true,
+  8-12 pairs, hourly reselection — see reports/dynamic_pair_selection_2026-07-11.md).
+  Pair mix therefore varies during the test. Accepted because within-gate pair
+  heterogeneity is statistically absent (chi-square p=0.46) and the historical
+  basis population itself rotated pairs. Logged as a covariate, not a violation.
+- `data/flip_levers.json` (2026-07-09 state) independently requires
   ADX>=40 for PUT flips, >=15 for CALL flips, and hard-caps flips at ADX<=55 at the
   detection layer. Net effective test band: fresh flips with ADX in [40, 55]. That
   band ran ~56% WR historically, so the hypothesis stands, but the ADX>55 tail

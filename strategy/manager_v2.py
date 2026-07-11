@@ -764,8 +764,12 @@ class StrategyManagerV2:
         if settings.max_pairs_per_cycle > 0:
             candidates = candidates[:settings.max_pairs_per_cycle]
 
+        from strategy.pair_filter import load_dynamic_universe
+        dynamic_universe = load_dynamic_universe()
         if settings.allowed_pair_regex:
             filt_label, filt_val = "regex", settings.allowed_pair_regex
+        elif dynamic_universe is not None:
+            filt_label, filt_val = "dynamic", len(dynamic_universe)
         elif settings.allowed_pairs:
             filt_label, filt_val = "allow", len(settings.allowed_pairs)
         else:

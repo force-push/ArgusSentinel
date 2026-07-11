@@ -43,3 +43,4 @@ build/
 trades.db
 data/decisions.db.bak*
 data/.live_state.*.tmp
+data/pair_universe.json

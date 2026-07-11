@@ -10,13 +10,10 @@ import pytest
 from config.settings import BotSettings, settings
 
 
+_LIVE_TOGGLES = ("adx_flip_gate_enabled", "adx_flip_gate_min", "dynamic_pairs_enabled")
+
+
 @pytest.fixture(autouse=True)
-def _neutral_adx_flip_gate(monkeypatch):
-    monkeypatch.setattr(
-        settings, "adx_flip_gate_enabled",
-        BotSettings.model_fields["adx_flip_gate_enabled"].default,
-    )
-    monkeypatch.setattr(
-        settings, "adx_flip_gate_min",
-        BotSettings.model_fields["adx_flip_gate_min"].default,
-    )
+def _neutral_live_toggles(monkeypatch):
+    for field in _LIVE_TOGGLES:
+        monkeypatch.setattr(settings, field, BotSettings.model_fields[field].default)
