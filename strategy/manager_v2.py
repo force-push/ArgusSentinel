@@ -534,7 +534,23 @@ class StrategyManagerV2:
             learned_probability = calibrator.predict(model_features)
             entry_probability = min(strength, learned_probability)
 
-        skip = bool(penalties and entry_probability < required)
+        # ADX flip gate: hard filter, independent of the probability stack.
+        # See config/settings.py (adx_flip_gate_*) for the evidence basis.
+        gate_blocked = False
+        if settings.adx_flip_gate_enabled:
+            if entry_kind != "flip":
+                gate_blocked = True
+                penalties.append(f"adx_flip_gate_entry_kind={entry_kind}")
+            elif not isinstance(adx, (int, float)):
+                gate_blocked = True
+                penalties.append("adx_flip_gate_adx_missing")
+            elif adx < settings.adx_flip_gate_min:
+                gate_blocked = True
+                penalties.append(
+                    f"adx_flip_gate_adx={adx:.1f}<{settings.adx_flip_gate_min:.1f}"
+                )
+
+        skip = gate_blocked or bool(penalties and entry_probability < required)
         if not penalties and entry_probability < required and n_tracked >= settings.min_ev_samples:
             skip = True
             penalties.append(f"below_required_probability={entry_probability:.1%}<{required:.1%}")

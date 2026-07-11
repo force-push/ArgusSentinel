@@ -101,6 +101,15 @@ class BotSettings(BaseSettings):
     # Gate only activates when n_tracked >= min_ev_samples (cold-start pass-through).
     min_expected_value: float = Field(default=0.0, alias="MIN_EXPECTED_VALUE", ge=-1.0, le=1.0)
     min_ev_samples: int = Field(default=15, alias="MIN_EV_SAMPLES", ge=1)
+    # ADX flip gate (2026-07-11 forward test, reports/entry_edges_2026-07-11.md):
+    # when enabled, ONLY flip entries with ADX >= adx_flip_gate_min may trade.
+    # Historical basis: ADX>40 flips ran 56.8% WR over 544 trades with a monotone
+    # dose-response in ADX; all other entries averaged below break-even. Layered on
+    # top of existing policy — no other gate is altered — so the forward population
+    # stays comparable to the validated historical one. Pre-registered kill
+    # criteria: >=300 trades, stop if WR < 52.1%.
+    adx_flip_gate_enabled: bool = Field(default=False, alias="ADX_FLIP_GATE_ENABLED")
+    adx_flip_gate_min: float = Field(default=40.0, alias="ADX_FLIP_GATE_MIN", ge=0.0, le=100.0)
     # Variable stake sizing: scale the base stake upward only when the current
     # pair/direction/expiry has enough resolved evidence and clears binary
     # break-even by a probability margin. This is an edge amplifier, not a
