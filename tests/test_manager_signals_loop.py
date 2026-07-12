@@ -183,7 +183,7 @@ def test_signal_assessment_records_entry_context(monkeypatch):
     assert "rsi_extreme_against_entry=89.7" in assessment["summary"]
 
 
-def test_signal_assessment_blocks_stale_weak_flip(monkeypatch):
+def test_signal_assessment_blocks_weak_gap_flip_without_stale_or_adx_penalty(monkeypatch):
     monkeypatch.setattr(settings, "stake_amount", 1.5)
     monkeypatch.setattr(settings, "min_expected_value", 0.0)
     mgr = _strength_mgr(pair_wr=0.54, pair_n=100)
@@ -215,10 +215,12 @@ def test_signal_assessment_blocks_stale_weak_flip(monkeypatch):
 
     assert assessment["skip"] is True
     assert assessment["entry_probability"] < assessment["break_even_probability"]
-    assert "stale_flip=14bars" in assessment["penalties"]
     assert "weak_flip_gap_expansion=0.050" in assessment["penalties"]
     # flip_adx_exhausted penalty removed 2026-07-12 — high ADX must NOT penalise flips
     assert not any("flip_adx_exhausted" in p for p in assessment["penalties"])
+    # stale_flip penalty removed 2026-07-13 — long bars_in_trend must NOT penalise
+    # flips (bars_in_trend>=13 ran 57.1%, decision_sweep_2026-07-12)
+    assert not any("stale_flip" in p for p in assessment["penalties"])
 
 
 def test_signal_assessment_blocks_overextended_weak_trend(monkeypatch):

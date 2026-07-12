@@ -74,6 +74,28 @@ ADX > 55, `strategy/manager_v2.py::_assess_trade_signal`) still applies to the
 newly admitted segment — it can suppress borderline-strength entries but is not
 a hard block. Left in place pending Kym's decision.
 
+## Amendment 3 — 2026-07-13 (Kym directive)
+
+The `stale_flip` soft penalty removed from `_assess_trade_signal` (was -0.04
+strength for flip bars_in_trend > 8). Basis: decision_sweep_2026-07-12 —
+bars_in_trend >= 13 flips ran 57.1% (Wilson-LB 52.4%, both halves above
+break-even); the penalty suppressed a better-than-average segment (same
+inverted-heuristic pattern as the removed flip_adx_exhausted penalty).
+
+Impact on the pre-registered verdict: unlike Amendment 2, this DOES touch the
+verdict population — borderline-strength flips with bars_in_trend > 8 inside
+ADX [40,55] that previously skipped can now trade, and the sweep says that
+segment is above-average, which biases the verdict WR upward from this date.
+Mitigation: every row stamps bars_in_trend, so at verdict time the WR will be
+reported BOTH ways — full population, and excluding post-2026-07-13 trades
+with bars_in_trend > 8 (the composition-neutral view). If the two disagree on
+the kill/pass line, the composition-neutral number governs and the widened
+population runs as its own follow-on test.
+
+Also same day: the marginal_wr shadow arm activated (SHADOWS_ENABLED=true,
+see reports/forward_test_marginal_wr_shadow.md). Shadows never enter this
+test's population (shadow=0 filter), so no verdict impact.
+
 ## Amendment 2 — 2026-07-12 (Kym directive, same session as Amendment 1)
 
 The `flip_adx_exhausted` soft penalty removed from

@@ -471,9 +471,6 @@ class StrategyManagerV2:
             positives.append(f"strong_direction_wr={tracked_rate:.1%}/n={n_tracked}")
 
         if entry_kind == "flip":
-            if isinstance(bars_in_trend, (int, float)) and bars_in_trend > 8:
-                strength -= 0.04
-                penalties.append(f"stale_flip={int(bars_in_trend)}bars")
             if isinstance(gap_expansion, (int, float)) and 0 <= gap_expansion < 0.15:
                 strength -= 0.03
                 penalties.append(f"weak_flip_gap_expansion={gap_expansion:.3f}")
@@ -481,6 +478,10 @@ class StrategyManagerV2:
             # contradicted the monotone dose-response (high-ADX flips are the
             # strongest segment, >45 ran 58.9% n=321). Matches flip_adx_max cap
             # removal in data/flip_levers.json the same day.
+            # 2026-07-13 (Kym): stale_flip penalty (bars_in_trend>8, -0.04) removed —
+            # same inverted-heuristic pattern: bars_in_trend>=13 flips ran 57.1%
+            # (Wilson-LB 52.4%) in decision_sweep_2026-07-12. Forward-test
+            # Amendment 3 documents the population effect.
         elif entry_kind == "trend":
             if isinstance(dist_atr, (int, float)) and dist_atr > 2.2:
                 strength -= 0.04
