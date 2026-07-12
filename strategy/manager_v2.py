@@ -1130,6 +1130,22 @@ class StrategyManagerV2:
                     assessment["required_probability"], tracked_rate, n_tracked,
                     prospective_stake,
                 )
+                # Shadow arm (decision_sweep_2026-07-12 LOOSEN #1): validated-edge
+                # flips (ADX>=40) blocked ONLY by the marginal_pair_wr penalty —
+                # the gate twice shown non-predictive. Sampled to bound volume
+                # (~750/day blocked); requires the SHADOWS_ENABLED master too.
+                if (settings.shadow_marginal_wr_enabled
+                        and settings.trade_mode != TradeMode.LIVE
+                        and self._mwr_shadow_eligible(flip_metrics, penalties)
+                        and self._shadow_mwr_count_this_hour(cid)):
+                    asyncio.create_task(self._place_single_shadow(
+                        pair_api=pair_api,
+                        direction=conf.direction,
+                        base_row=row,
+                        log_path=log_path,
+                        shadow_kind="marginal_wr",
+                        would_skip_reason=row.skip_reason,
+                    ))
                 continue
 
             # Blocked-hour shadow mode: the signal gates passed, but this hour is
@@ -1547,6 +1563,38 @@ class StrategyManagerV2:
             self._open_trade_count = max(0, self._open_trade_count - 1)
             log.error("_place_flip_trade {} failed: {}", pair_api, exc)
             return False
+
+    @staticmethod
+    def _mwr_shadow_eligible(flip_metrics: dict | None, penalties: list[str]) -> bool:
+        """marginal_wr shadow-arm eligibility: an ADX>=40 flip whose strength
+        skip involves marginal_pair_wr and NO other qualitative penalty, so the
+        collected counterfactual isolates that one gate's effect."""
+        fm = flip_metrics or {}
+        return (
+            fm.get("entry_kind") == "flip"
+            and isinstance(fm.get("adx"), (int, float))
+            and fm["adx"] >= 40
+            and any(p.startswith("marginal_pair_wr") for p in penalties)
+            and not any(p.startswith(("soft_direction_wr", "stale_flip",
+                                      "weak_flip_gap_expansion",
+                                      "rsi_extreme_against_entry"))
+                        for p in penalties)
+        )
+
+    def _shadow_mwr_count_this_hour(self, cid) -> bool:
+        """Reserve one marginal_wr shadow slot; False once the hourly cap is hit.
+
+        Keeps the arm's broker/DB volume bounded no matter how many eligible
+        skips occur (~750/day observed in the 14d window pre-arm).
+        """
+        hour = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+        if getattr(self, "_shadow_mwr_hour", None) != hour:
+            self._shadow_mwr_hour = hour
+            self._shadow_mwr_n = 0
+        if self._shadow_mwr_n >= settings.shadow_marginal_wr_hourly_cap:
+            return False
+        self._shadow_mwr_n += 1
+        return True
 
     async def _place_single_shadow(
         self, *, pair_api, direction, base_row, log_path,

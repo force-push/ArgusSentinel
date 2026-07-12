@@ -314,6 +314,18 @@ class BotSettings(BaseSettings):
         default=False, alias="SHADOW_TRADE_BLOCKED_HOURS"
     )
 
+    # Marginal-pair-WR shadow arm (reports/decision_sweep_2026-07-12.md,
+    # LOOSEN #1): shadow ADX>=40 flips blocked ONLY by the marginal_pair_wr
+    # penalty, to collect counterfactual outcomes for the gate the entry-edge
+    # deep dive flagged as non-predictive (~750 such skips/day). Requires the
+    # SHADOWS_ENABLED master switch; demo only; volume bounded by hourly cap.
+    shadow_marginal_wr_enabled: bool = Field(
+        default=False, alias="SHADOW_MARGINAL_WR_ENABLED"
+    )
+    shadow_marginal_wr_hourly_cap: int = Field(
+        default=20, alias="SHADOW_MARGINAL_WR_HOURLY_CAP", ge=1
+    )
+
     # Fade-rule shadow experiment (SHADOW_TRADE_ANALYSIS.md Finding 4a):
     # when >= this many signals agree on one direction, place a shadow in the
     # OPPOSITE direction (shadow_kind="fade"). Unanimity among our correlated

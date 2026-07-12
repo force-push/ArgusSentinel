@@ -775,3 +775,36 @@ async def test_shadow_expiry_disabled_when_empty(tmp_path, monkeypatch):
     rows = _read_decisions(tmp_path)
     shadow = [r for r in rows if r.get("shadow_kind") == "expiry"]
     assert len(shadow) == 0
+
+
+# ── marginal_wr shadow arm (decision_sweep 2026-07-12 LOOSEN #1) ──────────────
+
+def test_mwr_shadow_eligible_pure_marginal_block():
+    fm = {"entry_kind": "flip", "adx": 43.0}
+    assert StrategyManagerV2._mwr_shadow_eligible(
+        fm, ["marginal_pair_wr=51.0%/n=100"]) is True
+
+
+def test_mwr_shadow_ineligible_cases():
+    ok = ["marginal_pair_wr=51.0%/n=100"]
+    assert not StrategyManagerV2._mwr_shadow_eligible(
+        {"entry_kind": "trend", "adx": 43.0}, ok)          # not a flip
+    assert not StrategyManagerV2._mwr_shadow_eligible(
+        {"entry_kind": "flip", "adx": 39.9}, ok)           # below the gate
+    assert not StrategyManagerV2._mwr_shadow_eligible(
+        {"entry_kind": "flip", "adx": None}, ok)           # missing adx
+    assert not StrategyManagerV2._mwr_shadow_eligible(None, ok)
+    assert not StrategyManagerV2._mwr_shadow_eligible(
+        {"entry_kind": "flip", "adx": 43.0}, [])           # no marginal penalty
+    assert not StrategyManagerV2._mwr_shadow_eligible(
+        {"entry_kind": "flip", "adx": 43.0},
+        ["marginal_pair_wr=51.0%/n=100", "stale_flip=14bars"])  # confounded
+
+
+def test_mwr_shadow_hourly_cap(monkeypatch):
+    from config.settings import settings
+    monkeypatch.setattr(settings, "shadow_marginal_wr_hourly_cap", 2)
+    mgr = object.__new__(StrategyManagerV2)
+    assert mgr._shadow_mwr_count_this_hour("c1") is True
+    assert mgr._shadow_mwr_count_this_hour("c2") is True
+    assert mgr._shadow_mwr_count_this_hour("c3") is False  # cap reached
