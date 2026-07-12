@@ -129,4 +129,7 @@ def test_gate_does_not_soften_existing_penalties(monkeypatch):
     }, tracked_rate=0.50, n_tracked=40)
 
     assert assessment["skip"] is True
-    assert "stale_flip=14bars" in assessment["penalties"]
+    # stale_flip removed 2026-07-13 (inverted heuristic); the remaining
+    # penalties (marginal_pair_wr, soft_direction_wr, weak gap) still skip.
+    assert "marginal_pair_wr=51.0%/n=100" in assessment["penalties"]
+    assert not any("stale_flip" in x for x in assessment["penalties"])
