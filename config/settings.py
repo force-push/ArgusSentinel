@@ -110,6 +110,9 @@ class BotSettings(BaseSettings):
     # criteria: >=300 trades, stop if WR < 52.1%.
     adx_flip_gate_enabled: bool = Field(default=False, alias="ADX_FLIP_GATE_ENABLED")
     adx_flip_gate_min: float = Field(default=40.0, alias="ADX_FLIP_GATE_MIN", ge=0.0, le=100.0)
+    # Tick/bar capture to data/ticks/ for tick-replay backtesting (entry timing,
+    # expiry duration). Pure observability — no trading behaviour depends on it.
+    tick_capture_enabled: bool = Field(default=True, alias="TICK_CAPTURE_ENABLED")
     # Variable stake sizing: scale the base stake upward only when the current
     # pair/direction/expiry has enough resolved evidence and clears binary
     # break-even by a probability margin. This is an edge amplifier, not a

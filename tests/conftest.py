@@ -17,3 +17,6 @@ _LIVE_TOGGLES = ("adx_flip_gate_enabled", "adx_flip_gate_min", "dynamic_pairs_en
 def _neutral_live_toggles(monkeypatch):
     for field in _LIVE_TOGGLES:
         monkeypatch.setattr(settings, field, BotSettings.model_fields[field].default)
+    # Tick capture defaults ON in production but must not write data/ticks/
+    # from tests; capture tests opt in explicitly with a tmp_path directory.
+    monkeypatch.setattr(settings, "tick_capture_enabled", False)

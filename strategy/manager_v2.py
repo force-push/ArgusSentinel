@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from broker.sentiment_collector import SentimentCollector
+from broker.tick_capture import capture as tick_capture
 from config.settings import settings, TradeMode
 from data.candles import candles_to_df
 from strategy.decision import decide_signals, Decision
@@ -1354,7 +1355,9 @@ class StrategyManagerV2:
                         cl = await self._api.get_candles(
                             sym, period=candle_period, count=settings.history_length
                         )
-                    return sym, candles_to_df(cl)
+                    df = candles_to_df(cl)
+                    tick_capture.record_bars(sym, df, candle_period)
+                    return sym, df
                 except Exception as exc:
                     log.debug("[{}] prefetch {} failed: {}", cid, sym, exc)
                     return sym, None
