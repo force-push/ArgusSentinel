@@ -1,5 +1,61 @@
 # Change Log
 
+## 2026-07-12/13 — Win-rate program: ADX cap removed, tick capture, decision sweep, dormant shadow arm
+
+Kym directive: the primary optimisation goal is WIN RATE, measured as the
+Wilson lower bound (95%) — never raw WR, which trivially rewards trading less —
+pursued with increasing precision by all analysis and pair selection.
+
+**Policy changes (Kym-directed):**
+- `flip_adx_max` 55 → 999 in `data/flip_levers.json` (dbde2b1) and the
+  `flip_adx_exhausted` soft penalty removed from `_assess_trade_signal`
+  (e464fe8). The ≤55 exhaustion cap truncated the strongest dose-response
+  segment (ADX>45 flips ran 58.9%, n=321). Forward-test registration amended
+  (Amendments 1–2 in `reports/forward_test_adx_gate.md`); the pre-registered
+  verdict stays scoreable on the original ADX∈[40,55] band because every row
+  stamps its ADX and levers.
+
+**New capability (f8c1a16):** `broker/tick_capture.py` persists every received
+tick + history seed (via `TickAccumulator.process`) and watermark-deduped
+prefetch bars (1s/5s) to daily `data/ticks/YYYY-MM-DD.jsonl.gz`. Buffered,
+crash-safe multi-member gzip, fail-silent, `TICK_CAPTURE_ENABLED` (default on).
+Unblocks tick-replay backtesting of entry timing and expiry duration — nothing
+was persisted before. Note: with `STREAMING_ENABLED=false` (since 07-07) only
+bar rows flow; tick rows appear whenever streaming/focus runs.
+
+**Decision sweep (a8bec6b):** `scripts/decision_sweep.py` →
+`reports/decision_sweep_2026-07-12.md`. 555 hypotheses over 4,676 settled
+trades, median-split holdout, Wilson-LB ranking.
+
+**Learnings:**
+1. **No global edge — again.** Zero of 270 full-population rules clear
+   break-even in both halves. The edge lives only inside flip & ADX≥40.
+2. **Inverted-heuristic pattern (now seen twice).** Hand-tuned "safety"
+   penalties encode folk TA beliefs the data contradicts:
+   `flip_adx_exhausted` (removed) suppressed the strongest ADX segment, and
+   `stale_flip` (>8 bars, −0.04, still live) suppresses `bars_in_trend ≥ 13`
+   flips that ran 57.1% (LB 52.4%). Audit every qualitative penalty against
+   dose-response data before trusting it.
+3. **Best validated refinement:** `gap_at_flip ≤ 0.225 AND adx ≥ 41` — 59.9%
+   WR, LB 54.4%, h1 61.6%/h2 58.4%, p=0.0031, ~14 trades/day retained.
+   `dist_atr ≥ 3.0` (58.3%, LB 52.7%) supports the exhaustion-reversal thesis.
+4. **The biggest lever is LOOSEN, not TIGHTEN:** `marginal_pair_wr` blocked
+   10,473 ADX≥40 flips in 14d (~750/day) vs ~22/day traded — a 30× information
+   multiplier behind a gate twice shown non-predictive (trailing pair WR
+   regresses to mean).
+5. **Multiple-comparisons discipline:** 555 hypotheses ⇒ ~27 chance survivors
+   at p<0.05. Both-halves validation + volume floors mitigate; only forward
+   segments/shadows decide.
+6. **TIGHTEN candidates validate for free** — they're subsets of trades
+   already placed, so live segment queries suffice; shadow arms are only
+   needed to test LOOSEN hypotheses (skips have no outcomes; shadow rows were
+   purged 2026-06-23).
+
+**Dormant feature (eeb9609):** `marginal_wr` shadow arm — see
+`FEATURE_SHADOW_ARMS.md`. Graduation process: `FEATURE_FORWARD_TEST_PIPELINE.md`.
+
+---
+
 ## 2026-06-24 — Pair blocklist activated
 
 `BLOCKED_PAIRS` populated with 27 statistically confirmed chronic losers (WR<49%,
