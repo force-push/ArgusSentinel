@@ -476,9 +476,10 @@ class StrategyManagerV2:
             if isinstance(gap_expansion, (int, float)) and 0 <= gap_expansion < 0.15:
                 strength -= 0.03
                 penalties.append(f"weak_flip_gap_expansion={gap_expansion:.3f}")
-            if isinstance(adx, (int, float)) and adx > 55.0:
-                strength -= 0.03
-                penalties.append(f"flip_adx_exhausted={adx:.1f}")
+            # 2026-07-12 (Kym): flip_adx_exhausted penalty (ADX>55, -0.03) removed —
+            # contradicted the monotone dose-response (high-ADX flips are the
+            # strongest segment, >45 ran 58.9% n=321). Matches flip_adx_max cap
+            # removal in data/flip_levers.json the same day.
         elif entry_kind == "trend":
             if isinstance(dist_atr, (int, float)) and dist_atr > 2.2:
                 strength -= 0.04

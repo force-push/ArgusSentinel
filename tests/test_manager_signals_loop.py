@@ -217,7 +217,8 @@ def test_signal_assessment_blocks_stale_weak_flip(monkeypatch):
     assert assessment["entry_probability"] < assessment["break_even_probability"]
     assert "stale_flip=14bars" in assessment["penalties"]
     assert "weak_flip_gap_expansion=0.050" in assessment["penalties"]
-    assert "flip_adx_exhausted=58.0" in assessment["penalties"]
+    # flip_adx_exhausted penalty removed 2026-07-12 — high ADX must NOT penalise flips
+    assert not any("flip_adx_exhausted" in p for p in assessment["penalties"])
 
 
 def test_signal_assessment_blocks_overextended_weak_trend(monkeypatch):

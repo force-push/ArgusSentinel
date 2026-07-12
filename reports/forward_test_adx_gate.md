@@ -73,3 +73,12 @@ Note: the hardcoded `flip_adx_exhausted` soft penalty (-0.03 strength for flip
 ADX > 55, `strategy/manager_v2.py::_assess_trade_signal`) still applies to the
 newly admitted segment — it can suppress borderline-strength entries but is not
 a hard block. Left in place pending Kym's decision.
+
+## Amendment 2 — 2026-07-12 (Kym directive, same session as Amendment 1)
+
+The `flip_adx_exhausted` soft penalty removed from
+`strategy/manager_v2.py::_assess_trade_signal` (was -0.03 strength for flip
+ADX > 55). The ADX > 55 exploratory segment now trades with no ADX-related
+handicap of any kind. Original-band trades (ADX in [40, 55]) are unaffected —
+the penalty never fired below 55 — so the pre-registered verdict population is
+unchanged by this amendment.
