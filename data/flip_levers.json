@@ -1,5 +1,5 @@
 {
-  "_comment": "2026-07-09: USDRUB-only live mode. Keep the pair unlocked, but tighten setup gates instead of removing symbols: fresher flips, confirmed gap expansion, bounded continuation distance, and moderate volatility.",
+  "_comment": "2026-07-12 (Kym): flip_adx_max 55 -> 999 (off). The <=55 cap truncated the strongest dose-response segment (high-ADX flips, >45 ran 58.9% n=321); forward-test band is now ADX>=40 uncapped. Prior 2026-07-09 note: USDRUB-only live mode, tighten setup gates instead of removing symbols.",
   "st_period": 10,
   "st_multiplier": 3.0,
   "flip_window_bars": 8,
@@ -15,7 +15,7 @@
   "atr_distance_max": 2.2,
   "flip_atr_min": 0.8,
   "flip_atr_max": 999,
-  "flip_adx_max": 55,
+  "flip_adx_max": 999,
   "roc_period": 3,
   "cont_macd_gap_min": 0.35,
   "cont_rsi_min": 45,

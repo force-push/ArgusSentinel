@@ -54,3 +54,22 @@ cut looks better mid-run, that is a NEW test, not an edit to this one.
   detection layer. Net effective test band: fresh flips with ADX in [40, 55]. That
   band ran ~56% WR historically, so the hypothesis stands, but the ADX>55 tail
   (strongest historical segment) is excluded by the levers, not by this gate.
+
+## Amendment 1 — 2026-07-12T08:24Z (Kym directive)
+
+`flip_adx_max` in `data/flip_levers.json` raised 55 -> 999 (off). Rationale: the
+<=55 cap truncated the strongest dose-response segment (high-ADX flips ran 58.9%
+historically). Effective traded band widens from ADX [40, 55] to [40, inf) from
+this timestamp.
+
+Impact on the pre-registered verdict: every DecisionRow stamps `adx` and the
+active `flip_levers`, so the ORIGINAL test remains scoreable without contamination
+by restricting the verdict computation to flips with ADX in [40, 55] across the
+whole run. Trades with ADX > 55 (admitted only after this amendment) are tracked
+as a separate exploratory segment, not counted toward the pre-registered n=300 /
+52.1% kill rule unless Kym decides otherwise.
+
+Note: the hardcoded `flip_adx_exhausted` soft penalty (-0.03 strength for flip
+ADX > 55, `strategy/manager_v2.py::_assess_trade_signal`) still applies to the
+newly admitted segment — it can suppress borderline-strength entries but is not
+a hard block. Left in place pending Kym's decision.
