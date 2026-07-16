@@ -127,7 +127,6 @@ function applyState(s) {
     balance: s.balance, currency: s.currency,
   });
   if (s.kpis && !rangeKpisActive) store.setKpis(s.kpis);
-  if (Array.isArray(s.active)) store.setActive(s.active);
   if (s.skip_countdown) store.setSkipCountdown(s.skip_countdown);
 }
 
@@ -143,21 +142,12 @@ function onWsMessage(type, data) {
       applyState(data);
       break;
     case 'trade_opened':
-      store.upsertActive(data);
       break;
-    case 'trade_resolved': {
-      // flash + remove the matching active card, then prepend to history
-      const list = document.getElementById('active-list');
-      if (list && data.trade_id) {
-        list.dispatchEvent(new CustomEvent('trade:resolve', { detail: data }));
-      } else if (data.trade_id) {
-        store.removeActive(data.trade_id);
-      }
+    case 'trade_resolved':
       store.prependHistory(data);
       if (typeof data.balance_after === 'number') store.setMeta({ balance: data.balance_after });
       refreshPerformance();
       break;
-    }
     case 'history':
       store.prependHistory(data);
       break;
@@ -221,14 +211,6 @@ async function enterDemoMode() {
     loadSample('settings.json'),
   ]);
 
-  // re-base the sample active trades so countdowns are live from "now"
-  const now = Date.now();
-  state.active = (state.active || []).map((t, i) => {
-    const total = t.expiry_seconds || 30;
-    const left = Math.max(8, total - i * 6);
-    return { ...t, opened_at: new Date(now - (total - left) * 1000).toISOString(), expiry_at: new Date(now + left * 1000).toISOString() };
-  });
-
   applyState(state);
   store.setHistory(history.rows || []);
   perf.range = currentRange;
@@ -238,8 +220,7 @@ async function enterDemoMode() {
   startDemoSim();
 }
 
-// A light simulator: resolves an active trade when its countdown ends,
-// prepends a history row, nudges balance/P&L, and occasionally opens a new one.
+// Demo simulator: periodically resolves a simulated trade and prepends a history row.
 function startDemoSim() {
   if (demoSim) clearInterval(demoSim);
   const pairs = [
@@ -252,44 +233,27 @@ function startDemoSim() {
 
   demoSim = setInterval(() => {
     const now = Date.now();
-    const active = store.get('active');
-
-    // resolve any expired trade
-    for (const t of active) {
-      if (fmt.secondsUntil(t.expiry_at, now) <= 0) {
-        const win = Math.random() < 0.6;
-        const draw = Math.random() < 0.05;
-        const result = draw ? 'draw' : win ? 'win' : 'loss';
-        const payout = 0.92;
-        const pnl = result === 'win' ? +(t.stake * payout).toFixed(2) : result === 'loss' ? -t.stake : 0;
-        const meta = store.get('meta');
-        const balance_after = +((meta.balance || 0) + pnl).toFixed(2);
-        const row = {
-          ts: new Date(now).toISOString(), time: fmt.time(new Date(now).toISOString()),
-          pair_raw: t.pair_raw, pair_api: t.pair_api, otc: /otc/i.test(t.pair_raw),
-          dir: t.dir, decision: 'TRADE', result, pnl, stake: t.stake,
-          expiry_seconds: t.expiry_seconds, our_confluence: t.confluence_score,
-          bot_win_rate: 0.84, entry: t.entry, skip_reason: null, trade_id: t.trade_id,
-          balance_after,
-        };
-        onWsMessage('trade_resolved', row);
-        bumpKpis(result, pnl, balance_after);
-      }
-    }
-
-    // occasionally open a new trade to keep the panel alive
-    if (store.get('active').length < 3 && Math.random() < 0.4) {
+    if (Math.random() < 0.15) {
       const p = pairs[Math.floor(Math.random() * pairs.length)];
       const dir = Math.random() < 0.5 ? 'CALL' : 'PUT';
-      const exp = Math.random() < 0.5 ? 30 : 60;
-      const n = 3 + Math.floor(Math.random() * 3);
+      const win = Math.random() < 0.6;
+      const draw = Math.random() < 0.05;
+      const result = draw ? 'draw' : win ? 'win' : 'loss';
+      const stake = 1.5;
+      const pnl = result === 'win' ? +(stake * 0.92).toFixed(2) : result === 'loss' ? -stake : 0;
+      const meta = store.get('meta');
+      const balance_after = +((meta.balance || 0) + pnl).toFixed(2);
       counter += 1;
-      onWsMessage('trade_opened', {
-        trade_id: `sim-${counter}`, pair_raw: p.raw, pair_api: p.api, dir,
-        stake: 1.5, entry: p.entry, opened_at: new Date(now).toISOString(),
-        expiry_at: new Date(now + exp * 1000).toISOString(), expiry_seconds: exp,
-        confluence_n: n, confluence_score: +(0.75 + Math.random() * 0.18).toFixed(2),
-      });
+      const row = {
+        ts: new Date(now).toISOString(), time: fmt.time(new Date(now).toISOString()),
+        pair_raw: p.raw, pair_api: p.api, otc: /otc/i.test(p.raw),
+        dir, decision: 'TRADE', result, pnl, stake,
+        expiry_seconds: 30, our_confluence: +(0.75 + Math.random() * 0.18).toFixed(2),
+        bot_win_rate: 0.84, entry: p.entry, skip_reason: null, trade_id: `sim-${counter}`,
+        balance_after,
+      };
+      onWsMessage('trade_resolved', row);
+      bumpKpis(result, pnl, balance_after);
     }
   }, 1000);
 }
@@ -306,8 +270,6 @@ function bumpKpis(result, pnl, balance) {
   next.today_pnl = +(next.today_pnl + pnl).toFixed(2);
   const total = next.wins + next.losses + next.draws;
   next.win_rate = total ? next.wins / total : 0;
-  next.active_count = store.get('active').length;
-  next.at_risk = +(next.active_count * 1.5).toFixed(2);
   store.setKpis(next);
   store.setMeta({ balance });
 }
