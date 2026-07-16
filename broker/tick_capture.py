@@ -320,9 +320,9 @@ class TickCapture:
 async def main() -> None:
     """Entry point for launchd daemon."""
     # Import settings
-    from config.settings import Settings
+    from config.settings import BotSettings
 
-    settings = Settings()
+    settings = BotSettings()
 
     # Check if tick capture is enabled
     if not getattr(settings, "TICK_CAPTURE_ENABLED", True):
