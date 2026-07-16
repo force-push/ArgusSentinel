@@ -26,8 +26,16 @@ from typing import Any
 
 import pandas as pd
 
-from broker.tick_capture import capture
 from utils.logger import log
+
+
+def _get_capture():
+    # Lazy import to break tick_capture ↔ tick_stream circular dependency.
+    try:
+        from broker import tick_capture as _tc
+        return getattr(_tc, "capture", None)
+    except ImportError:
+        return None
 
 _EPOCH_OFFSET = 7200  # server epoch = UTC + 7200 s
 
@@ -89,7 +97,9 @@ class TickAccumulator:
             if not isinstance(sym, str) or sym != self._pair:
                 return None
             ts = float(epoch_raw) - _EPOCH_OFFSET  # normalise to UTC
-            capture.record_tick(sym, ts, float(price_raw))
+            cap = _get_capture()
+            if cap is not None:
+                cap.record_tick(sym, ts, float(price_raw))
             return self._update(ts, float(price_raw))
 
         return None
@@ -106,7 +116,9 @@ class TickAccumulator:
                 if len(item) >= 2:
                     ts = float(item[0]) - _EPOCH_OFFSET
                     px = float(item[1])
-                    capture.record_seed(self._pair, ts, px)
+                    cap = _get_capture()
+                    if cap is not None:
+                        cap.record_seed(self._pair, ts, px)
                     sec = int(ts)
                     self._insert(sec, {"o": px, "h": px, "l": px, "c": px, "n": 1})
         except Exception:
